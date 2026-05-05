@@ -13,11 +13,14 @@ import com.muxaeji.intervalo.domain.Note
 import com.muxaeji.intervalo.domain.Question
 import com.muxaeji.intervalo.domain.SessionStats
 import kotlin.random.Random
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 data class TrainingUiState(
     val selectedIntervals: Set<Interval> = setOf(Interval.MINOR_SECOND, Interval.MAJOR_SECOND),
@@ -196,6 +199,17 @@ class TrainingViewModel(
                 audioPlayer.playInterval(root, top)
             }
             _uiState.update { it.copy(isPlaying = false) }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        runCatching {
+            runBlocking {
+                withContext(NonCancellable) {
+                    audioPlayer.close()
+                }
+            }
         }
     }
 

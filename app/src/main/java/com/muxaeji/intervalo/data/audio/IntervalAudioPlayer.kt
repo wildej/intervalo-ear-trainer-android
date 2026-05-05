@@ -10,6 +10,13 @@ import kotlin.math.sin
 
 interface IntervalAudioPlayer {
     suspend fun playInterval(root: Note, top: Note)
+
+    /**
+     * Releases any held native / audio resources (e.g. FluidSynth + Oboe driver). Safe to call
+     * multiple times; the player may lazily re-acquire resources on the next [playInterval].
+     * Default no-op for stateless players.
+     */
+    suspend fun close() {}
 }
 
 class SineWaveIntervalAudioPlayer(

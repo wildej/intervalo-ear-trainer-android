@@ -6,19 +6,23 @@ import dev.kotlinds.fluidsynthkmp.AudioConfig
 import dev.kotlinds.fluidsynthkmp.FluidSynthPlayer
 import dev.kotlinds.fluidsynthkmp.Interpolation
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.math.min
 
 /**
  * Renders intervals via FluidSynth + SF2 (Chorium by default). Copies the SoundFont from assets
  * to app files dir on first use (FluidSynth loads by file path).
  *
- * Note: [FluidSynthPlayer] starts a platform audio driver on construction; we still drive output
- * through [playMono16Pcm] using [FluidSynthPlayer.renderFloat] for deterministic playback timing.
+ * Implementation note: [FluidSynthPlayer] starts a built-in Oboe audio driver on construction
+ * (see fluidsynth-kmp README and bundled liboboe.so). Earlier versions of this file additionally
+ * drove output through [FluidSynthPlayer.renderFloat] + [playMono16Pcm], which created a race:
+ * both the Oboe driver thread and our render thread pulled audio from the same synth, producing
+ * doubled / cracking playback and rapid resource churn. We now drive playback solely via the
+ * built-in driver by sending [FluidSynthPlayer.noteOn] / [FluidSynthPlayer.noteOff] on a timeline.
  */
 class SoundFontIntervalAudioPlayer(
     private val application: Application,
@@ -29,37 +33,75 @@ class SoundFontIntervalAudioPlayer(
 ) : IntervalAudioPlayer {
 
     private val mutex = Mutex()
-    private var engine: FluidSynthPlayer? = null
+    @Volatile private var engine: FluidSynthPlayer? = null
 
     override suspend fun playInterval(root: Note, top: Note) {
         withContext(Dispatchers.Default) {
             mutex.withLock {
                 val player = ensureEngineLocked()
-                val sr = 44100
-                val toneFrames = sr * timing.toneDurationMs / 1000
+                val tone = timing.toneDurationMs.toLong()
+                val pause = timing.chordToArpeggioPauseMs
+                val gap = timing.arpeggioGapMs
 
-                allNotesOff(player)
-                player.programChange(channel, presetProgram)
+                try {
+                    player.noteOn(channel, root.midi, NOTE_VELOCITY)
+                    player.noteOn(channel, top.midi, NOTE_VELOCITY)
+                    delay(tone)
+                    player.noteOff(channel, root.midi)
+                    player.noteOff(channel, top.midi)
 
-                player.noteOn(channel, root.midi, 96)
-                player.noteOn(channel, top.midi, 96)
-                val chord = renderMonoPcm(player, toneFrames)
-                player.noteOff(channel, root.midi)
-                player.noteOff(channel, top.midi)
-                playMono16Pcm(sr, chord)
+                    delay(pause)
 
-                delay(timing.chordToArpeggioPauseMs)
+                    val note2Start = (tone + gap).coerceAtLeast(0L)
+                    val note1End = tone
+                    val note2End = note2Start + tone
 
-                val a = renderNote(player, root.midi, toneFrames)
-                val b = renderNote(player, top.midi, toneFrames)
-                val arpeggio = ArpeggioMixer.mergeSequential(a, b, sr, timing.arpeggioGapMs)
-                playMono16Pcm(sr, arpeggio)
+                    player.noteOn(channel, root.midi, NOTE_VELOCITY)
+
+                    val events = listOf(
+                        TimedEvent(note2Start) { player.noteOn(channel, top.midi, NOTE_VELOCITY) },
+                        TimedEvent(note1End) { player.noteOff(channel, root.midi) },
+                        TimedEvent(note2End) { player.noteOff(channel, top.midi) }
+                    ).sortedBy { it.timeMs }
+
+                    var elapsed = 0L
+                    for (event in events) {
+                        val wait = event.timeMs - elapsed
+                        if (wait > 0L) delay(wait)
+                        event.action()
+                        elapsed = event.timeMs
+                    }
+
+                    delay(RELEASE_TAIL_MS)
+                } finally {
+                    withContext(NonCancellable) {
+                        runCatching {
+                            player.noteOff(channel, root.midi)
+                            player.noteOff(channel, top.midi)
+                        }
+                    }
+                }
             }
         }
     }
 
+    /**
+     * Releases the underlying FluidSynth engine (and its Oboe audio driver). Safe to call multiple
+     * times. After [close], the next [playInterval] call will lazily re-create the engine.
+     */
+    override suspend fun close() {
+        mutex.withLock {
+            val current = engine ?: return
+            engine = null
+            runCatching {
+                for (k in 0..127) current.noteOff(channel, k)
+            }
+            runCatching { current.close() }
+        }
+    }
+
     private fun ensureEngineLocked(): FluidSynthPlayer {
-        if (engine != null) return engine!!
+        engine?.let { return it }
         val path = ensureSf2OnDisk()
         val p = FluidSynthPlayer(
             AudioConfig(
@@ -89,39 +131,10 @@ class SoundFontIntervalAudioPlayer(
         return out.absolutePath
     }
 
-    private fun allNotesOff(player: FluidSynthPlayer) {
-        for (k in 0..127) {
-            player.noteOff(channel, k)
-        }
-    }
+    private data class TimedEvent(val timeMs: Long, val action: () -> Unit)
 
-    private fun renderNote(player: FluidSynthPlayer, midi: Int, totalFrames: Int): ShortArray {
-        allNotesOff(player)
-        player.noteOn(channel, midi, 96)
-        val pcm = renderMonoPcm(player, totalFrames)
-        player.noteOff(channel, midi)
-        return pcm
-    }
-
-    private fun renderMonoPcm(player: FluidSynthPlayer, totalFrames: Int): ShortArray {
-        val out = ShortArray(totalFrames)
-        var done = 0
-        val chunk = 256
-        while (done < totalFrames) {
-            val n = min(chunk, totalFrames - done)
-            val floats = player.renderFloat(n)
-            require(floats.size == n * 2) { "Expected stereo interleaved buffer" }
-            for (i in 0 until n) {
-                val l = floats[2 * i]
-                val r = floats[2 * i + 1]
-                val s = ((l + r) * 0.5f * 32767f).toInt().coerceIn(
-                    Short.MIN_VALUE.toInt(),
-                    Short.MAX_VALUE.toInt()
-                )
-                out[done + i] = s.toShort()
-            }
-            done += n
-        }
-        return out
+    private companion object {
+        const val NOTE_VELOCITY = 96
+        const val RELEASE_TAIL_MS = 250L
     }
 }

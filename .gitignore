@@ -15,3 +15,7 @@ out/
 # OS
 .DS_Store
 Thumbs.db
+
+# Signing
+*.jks
+keystore.properties

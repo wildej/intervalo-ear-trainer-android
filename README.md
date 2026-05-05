@@ -1,54 +1,52 @@
-# Intervalo (Android MVP)
+# Intervalo
 
-Android-приложение для тренировки распознавания музыкальных интервалов на слух.
+`Intervalo` — Android-приложение для тренировки распознавания музыкальных интервалов на слух. Проект написан на Kotlin с UI на Jetpack Compose и ориентирован на офлайн-использование без аккаунтов и сетевых зависимостей.
 
-## Что уже реализовано
+## Что есть в приложении
 
-- Выбор произвольного набора интервалов перед стартом тренировки.
-- Генерация случайного вопроса:
-  - случайная базовая нота;
-  - случайный интервал из выбранного набора.
-- Воспроизведение интервала:
-  - сначала две ноты вместе;
-  - затем по очереди.
-- Экран ответа: выбор интервала сразу даёт обратную связь «верно/неверно».
-- Кнопка повторного прослушивания.
-- Экран итогов тренировки: `верно/всего`, точность в процентах.
-- Базовые unit и UI тесты.
+### 1. Обычная тренировка
 
-## Аудио (SoundFont и семплы)
+- выбор набора интервалов перед началом сессии;
+- опция фиксированной базовой ноты `C4`;
+- генерация случайного вопроса из выбранных интервалов;
+- повторное воспроизведение текущего интервала;
+- мгновенная проверка ответа;
+- экран результатов с числом верных ответов и точностью.
 
-- **Основной источник:** `app/src/main/assets/soundfonts/Chorium.SF2` (взят из [Repetitor](https://github.com/free-creations/Repetitor), **Apache-2.0**; см. [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)) — рендер через [fluidsynth-kmp](https://github.com/kotlinds/fluidsynth-kmp) (FluidSynth, **LGPL-2.1** для нативных библиотек; см. лицензию пакета на Maven / репозитории). При первом запуске файл копируется во внутреннее хранилище приложения.
-- **Запасной путь:** `app/src/main/assets/audio/piano_teddy/` (WAV, Teddy_Frost, CC0) — `MultiSampleIntervalAudioPlayer`.  
-- **Ещё запасной:** `app/src/main/assets/audio/piano_ref.wav` — один WAV + ресемплинг.  
-- Если ничего из этого нет — синтезатор (синус).
+### 2. Режим показа
 
-## Тайминг воспроизведения
+- список всех интервалов;
+- прослушивание каждого интервала по нажатию без проверки ответа.
 
-- Всё в `IntervalPlaybackTiming`.  
-- Поле **`arpeggioGapMs`**: пауза между двумя нотами арпеджио; **отрицательное значение** — перекрытие (вторая нота начинается до окончания первой).
+### 3. Игровой режим
 
-## Технологии
+- матчинг «звук ↔ название интервала»;
+- 5 жизней на игру;
+- раунды по 6 интервалов;
+- сохранение локального рекорда по числу пройденных раундов.
+
+### 4. Служебные экраны
+
+- экран с правилами игрового режима;
+- встроенная политика конфиденциальности;
+- отправка последнего crash-отчета со стартового экрана, если отчет существует.
+
+## Стек
 
 - Kotlin
 - Jetpack Compose
+- Material 3
 - Navigation Compose
-- MVVM
+- Android ViewModel + `StateFlow`
+- Coroutines
+- Timber
 
-## Быстрый запуск (Android Studio)
+## Требования к окружению
 
-1. Открыть проект в Android Studio.
-2. Дождаться Gradle Sync.
-3. Подключить устройство Android (USB debugging) или запустить эмулятор.
-4. Нажать `Run`.
-
-## Build from scratch (терминал)
-
-Минимальные требования:
-
-- JDK `21`
-- Android SDK (platform + build-tools, которые просит Android Studio/AGP)
-- `ANDROID_HOME` (или `local.properties` с `sdk.dir=...`)
+- JDK `17`
+- Android SDK с `compileSdk 34` и `targetSdk 34`
+- `minSdk 26`
+- Android Studio с установленными SDK Platform / Build Tools
 
 Проверка окружения:
 
@@ -57,40 +55,64 @@ java -version
 echo $ANDROID_HOME
 ```
 
-Сборка debug APK:
+Если `ANDROID_HOME` не задан, достаточно корректного `local.properties` с `sdk.dir=...`.
+
+## Быстрый запуск
+
+### Через Android Studio
+
+1. Откройте проект.
+2. Дождитесь Gradle Sync.
+3. Запустите приложение на устройстве или эмуляторе.
+
+### Через терминал
+
+Собрать debug APK:
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-Запуск unit-тестов:
+APK будет лежать по пути:
 
-```bash
-./gradlew :app:testDebugUnitTest
-```
+`/work/intervalo-ear-trainer-android/app/build/outputs/apk/debug/app-debug.apk`
 
-APK после сборки:
-
-`app/build/outputs/apk/debug/app-debug.apk`
-
-## Сборка APK из терминала
-
-Через Gradle Wrapper (рекомендуется):
-
-```bash
-./gradlew :app:assembleDebug
-```
-
-После сборки APK обычно находится в:
-
-`app/build/outputs/apk/debug/app-debug.apk`
-
-## Установка APK на телефон (ADB)
+Установить на устройство:
 
 ```bash
 adb devices
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r /work/intervalo-ear-trainer-android/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+## Release-сборка
+
+В проекте поддерживается подпись релизной сборки через файл `keystore.properties` в корне репозитория.
+
+Ожидаемые ключи:
+
+- `storeFile`
+- `storePassword`
+- `keyAlias`
+- `keyPassword`
+
+Если `keystore.properties` отсутствует, проект все равно собирается, но релизная подпись не будет настроена автоматически.
+
+Собрать release APK:
+
+```bash
+./gradlew :app:assembleRelease
+```
+
+## Как устроено аудио
+
+Приложение выбирает первый доступный способ воспроизведения:
+
+1. `SoundFontIntervalAudioPlayer` с `app/src/main/assets/soundfonts/Chorium.SF2`
+2. `MultiSampleIntervalAudioPlayer` с WAV-сэмплами из `app/src/main/assets/audio/piano_teddy/`
+3. `AssetSampleIntervalAudioPlayer` с `app/src/main/assets/audio/piano_ref.wav`
+4. запасной синтезатор на синусоиде
+
+Тайминги воспроизведения задаются в `IntervalPlaybackTiming`.
 
 ## Тесты
 
@@ -100,35 +122,29 @@ Unit-тесты:
 ./gradlew :app:testDebugUnitTest
 ```
 
-Instrumentation/UI тесты (нужно подключенное устройство или эмулятор):
+UI / instrumentation тесты:
 
 ```bash
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-## Лицензия
+## Crash-отчеты
 
-- Исходный код проекта: **MIT** — см. [`LICENSE`](LICENSE).
-- Сторонние библиотеки и вложенные ассеты (SoundFont, семплы): см. [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-
-## Проверка стабильности аудио
-
-См. чеклист: `QA_STABILIZATION.md`
-
-## Crash-отчеты (вручную)
-
-Если приложение не стартует, crash-файлы можно забрать вручную.
-
-Где лежат отчеты:
+Приложение сохраняет crash-отчеты во внутреннее хранилище:
 
 `/data/data/com.muxaeji.intervalo/files/crash-reports/`
 
-Для debug-сборки через ADB:
+Для debug-сборки отчет можно выгрузить через ADB:
 
 ```bash
 adb shell run-as com.muxaeji.intervalo ls files/crash-reports
 adb exec-out run-as com.muxaeji.intervalo cat files/crash-reports/<имя_файла> > crash-report.txt
 ```
 
-Если приложение запускается, можно отправить последний отчет кнопкой
-`Отправить crash-отчет` на стартовом экране.
+Если приложение запускается, последний отчет можно отправить прямо из стартового меню кнопкой `Отправить crash-отчет`.
+
+## Полезные документы
+
+- [`QA_STABILIZATION.md`](QA_STABILIZATION.md) — чеклист для проверки стабильности аудио
+- [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) — лицензии сторонних библиотек и ассетов
+- [`LICENSE`](LICENSE) — лицензия исходного кода проекта
